@@ -1,92 +1,112 @@
-use std::collections::HashMap;
+use std::sync::Arc;
 
+use tracing::info;
 use anyhow::Result;
-use futures_util::StreamExt;
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use client::ChatResponse;
+use futures::StreamExt;
+use host::{HostEvent, HostListen, HostServer};
+use shared::{UIAction, UIActionResult};
+use tokio::{signal, sync::mpsc};
 
-#[derive(Debug, Serialize, Deserialize)]
-struct ChatInfo {
-    id: String,
-    title: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct MessageInfo {
-    #[serde(rename = "userMessageId")]
-    user_message_id: String,
-    #[serde(rename = "assistantMessageId")]
-    assistant_message_id: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ToolCall {
-    name: String,
-    arguments: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ToolResult {
-    name: String,
-    result: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", content = "content")]
-enum ChatResponse {
-    #[serde(rename = "text")]
-    Text(String),
-    #[serde(rename = "tool_calls")]
-    ToolCalls(Vec<ToolCall>),
-    #[serde(rename = "tool_result")]
-    ToolResult(Vec<ToolResult>),
-    #[serde(rename = "chat_info")]
-    ChatInfo(ChatInfo),
-    #[serde(rename = "message_info")]
-    MessageInfo(MessageInfo),
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct MessageStreamFrame {
-    message: String,
-}
+mod client;
+mod host;
+mod logger;
+mod message;
+mod shared;
+mod tui;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let client = Client::new();
-    let message = chat(&client, "hi").await?;
-    println!("{}", message);
-    Ok(())
-}
+    logger::initialize_logging()?;
 
-async fn chat(client: &Client, message: &str) -> Result<String> {
-    let params = HashMap::from([("message", message)]);
-    let mut stream = client.post("http://localhost:61990/api/chat")
-        .form(&params)
-        .send()
-        .await?
-        .bytes_stream();
+    let (mut host, mut host_recv) = host::HostProcess::new().await?;
+    host.spawn().await?;
 
-    let mut message = String::with_capacity(1024);
-    while let Some(Ok(item)) = stream.next().await {
-        if item.is_empty() || item.len() < 6 {
-            break;
-        }
+    let (tx_ui, mut rx_ui) = mpsc::channel(1);
+    let (tx_host, rx_host) = mpsc::channel(1);
 
-        let body = item.slice(6..);
-        if body.eq_ignore_ascii_case(b"[DONE]\n\n") {
-            break;
-        }
+    let tui_handle = tokio::spawn(async move {
+        let mut tui = tui::Tui::new(tx_ui, rx_host);
+        tui.run().await;
+    });
 
-        let body = serde_json::from_slice::<MessageStreamFrame>(&body)?;
-        let body = serde_json::from_str::<ChatResponse>(&body.message)?;
-        match body {
-            ChatResponse::Text(text) => {
-                message.push_str(&text);
+    let (ip, port) = loop {
+        tokio::select! {
+            _ = signal::ctrl_c() => return Ok(()),
+            Some(evt) = host_recv.recv() => {
+                match evt {
+                    HostEvent::BusMessage(msg) => {
+                        if let Some(HostServer {
+                            listen: Some(HostListen {
+                                ip: Some(_ip),
+                                port: Some(_port),
+                            }),
+                        }) = msg.server
+                        {
+                            info!("Host listen: {}:{}", _ip, _port);
+                            break (_ip, _port);
+                        } else {
+                            return Err(anyhow::anyhow!("Failed to get host listen"));
+                        }
+                    },
+                    HostEvent::Error(e) => {
+                        return Err(anyhow::anyhow!(e));
+                    }
+                }
             }
-            _ => {}
+        }
+    };
+
+    let client = client::ChatClient::new(ip, port);
+    if let Err(e) = client.wait_for_server().await {
+        return Err(e);
+    }
+
+    loop {
+        tokio::select! {
+            _ = signal::ctrl_c() => break,
+            Some(evt) = rx_ui.recv() => {
+                match evt {
+                    UIAction::Quit => break,
+                    UIAction::Chat { id, message } => {
+                        let mut stream = client.chat_stream(&message);
+                        let mut chat_id: Option<Arc<String>> = id.map(Arc::new);
+
+                        use ChatResponse::*;
+                        while let Some(Ok(response)) = stream.next().await {
+                            match response {
+                                Text(text)=> {
+                                    if let Some(id) = &chat_id {
+                                        tx_host.send(UIActionResult::Chat {
+                                            id: id.clone(),
+                                            content: text,
+                                        }).await?;
+                                    }
+                                },
+                                ChatInfo(chat_info) => {
+                                    if chat_id.is_none() {
+                                        chat_id = Some(Arc::new(chat_info.id));
+                                    }
+                                },
+                                MessageInfo(message_info) => {
+                                    todo!()
+                                },
+                                ToolCalls(tool_calls) => {
+                                    todo!()
+                                },
+                                ToolResult(tool_results) => {
+                                    todo!()
+                                },
+                            }
+                        }
+
+                        tx_host.send(UIActionResult::End).await?;
+                    }
+                }
+            }
         }
     }
 
-    Ok(message)
+    tui_handle.await?;
+    Ok(())
 }
