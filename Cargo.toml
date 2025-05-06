@@ -18,3 +18,8 @@ futures = "0.3.31"
 inotify = "0.11.0"
 async-stream = "0.3.6"
 tui-input = "0.12.0"
+tui-textarea = "0.7.0"
+tracing-error = "0.2.1"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+lazy_static = "1.5.0"

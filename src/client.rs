@@ -8,29 +8,29 @@ use serde::Deserialize;
 use tokio::time::timeout;
 
 #[derive(Debug, Deserialize)]
-struct ChatInfo {
-    id: String,
-    title: String,
+pub struct ChatInfo {
+    pub id: String,
+    pub title: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct MessageInfo {
+pub struct MessageInfo {
     #[serde(rename = "userMessageId")]
-    user_message_id: String,
+    pub user_message_id: String,
     #[serde(rename = "assistantMessageId")]
-    assistant_message_id: String,
+    pub assistant_message_id: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct ToolCall {
-    name: String,
-    arguments: String,
+pub struct ToolCall {
+    pub name: String,
+    pub arguments: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct ToolResult {
-    name: String,
-    result: String,
+pub struct ToolResult {
+    pub name: String,
+    pub result: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -73,7 +73,7 @@ impl ChatClient {
         format!("http://{}:{}/{}", self.ip, self.port, path)
     }
 
-    pub fn chat_stream(&self, message: &str) -> Result<ChatResponseStream> {
+    pub fn chat_stream(&self, message: &str) -> ChatResponseStream {
         let params = HashMap::from([("message", message)]);
         let url = self.url("api/chat");
 
@@ -102,13 +102,13 @@ impl ChatClient {
             }
         };
 
-        Ok(ChatResponseStream {
+        ChatResponseStream {
             stream: Box::pin(stream),
-        })
+        }
     }
 
     pub async fn chat(&self, message: &str) -> Result<String> {
-        let mut stream = self.chat_stream(message)?;
+        let mut stream = self.chat_stream(message);
 
         let mut message = String::with_capacity(1024);
         while let Some(response) = stream.next().await {

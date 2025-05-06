@@ -144,7 +144,7 @@ impl HostProcess {
 
         Command::new("git")
             .arg("switch")
-            .arg("v0.1.4")
+            .arg("v0.1.5")
             .current_dir(path)
             .stderr(Stdio::null())
             .stdout(Stdio::null())
