@@ -10,15 +10,16 @@ use std::{
     process::{ExitStatus, Stdio},
 };
 
-use directories::{ProjectDirs, UserDirs};
 use tokio::{
     fs::File,
-    io::{AsyncReadExt, BufReader},
+    io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter},
     process::{Child, Command},
     sync::mpsc::{channel, Receiver, Sender},
     task::JoinHandle,
 };
 use serde::Deserialize;
+
+use crate::shared::PROJECT_DIRS;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct HostStatus {
@@ -83,12 +84,16 @@ impl HostProcess {
             Ok(())
         }));
 
-        let (config_dir, data_dir) = Self::get_config_dir();
-        tokio::fs::create_dir_all(&config_dir).await?;
-        tokio::fs::create_dir_all(&data_dir).await?;
+        let dirs = PROJECT_DIRS.clone();
+        let host_config_dir = dirs.host_config_dir();
+        let host_data_dir = dirs.host_data_dir();
+        let host_cache_dir = dirs.host_cache_dir();
+        tokio::fs::create_dir_all(&host_config_dir).await?;
+        tokio::fs::create_dir_all(&host_data_dir).await?;
+        tokio::fs::create_dir_all(&host_cache_dir).await?;
 
-        let host_dir = data_dir.join("host");
-        Self::clone_host(&host_dir).await?;
+        Self::clone_host(&host_data_dir).await?;
+        Self::init_host_config(&self, &host_config_dir, &host_data_dir).await?;
 
         let process = Command::new("uv")
             .arg("run")
@@ -97,35 +102,43 @@ impl HostProcess {
             .arg("0")
             .arg("--report_status_file")
             .arg(self.file_path.to_string_lossy().to_string())
-            .env("PATH", std::env::var("PATH").unwrap_or_default())
+            .env("PATH", env!("PATH"))
+            .env("DIVE_CONFIG_DIR", host_config_dir.to_string_lossy().to_string())
+            .env("RESOURCE_DIR", host_cache_dir.to_string_lossy().to_string())
             .stderr(Stdio::null())
             .stdout(Stdio::null())
-            .current_dir(&host_dir)
+            .current_dir(&host_data_dir)
             .spawn()?;
 
         self.child_process = Some(process);
         Ok(())
     }
 
-    fn get_config_dir() -> (PathBuf, PathBuf) {
-        ProjectDirs::from("", "", "tive")
-            .map(|proj_dirs| (
-                proj_dirs.config_dir().to_path_buf(),
-                proj_dirs.data_local_dir().to_path_buf()
-            ))
-            .or_else(|| {
-                UserDirs::new()
-                    .map(|user| {
-                        let home = user.home_dir();
-                        (
-                            home.join(".config").join("tive"),
-                            home.join(".local").join("share").join("tive")
-                        )
-                    })
-            })
-            .unwrap_or_else(|| {
-                (PathBuf::from("./.tive/config"), PathBuf::from("./.tive/data"))
-            })
+    async fn init_host_config(&self, config_dir: &Path, db_dir: &Path) -> Result<()> {
+        create_file_if_not_exists(&config_dir.join("command_alias.json"), b"{}").await?;
+        create_file_if_not_exists(&config_dir.join("customrules"), b"").await?;
+        create_file_if_not_exists(&config_dir.join("mcp_config.json"), b"{\"mcpServers\":{}}").await?;
+        create_file_if_not_exists(&config_dir.join("model_config.json"), b"{\"activeProvider\":\"openai-0-0\",\"enableTools\":true,\"disableDiveSystemPrompt\":false}").await?;
+
+        let db_path = db_dir.to_string_lossy().to_string();
+        create_file_if_not_exists(&config_dir.join("dive_httpd.json"), format!("{{
+    \"db\": {{
+        \"uri\": \"sqlite:///{}/dived.sqlite\",
+        \"pool_size\": 5,
+        \"pool_recycle\": 60,
+        \"max_overflow\": 10,
+        \"echo\": false,
+        \"pool_pre_ping\": true,
+        \"migrate\": true
+        }},
+    \"checkpointer\": {{
+        \"uri\": \"sqlite:///{}/dived.sqlite\"
+    }}
+}}",
+            &db_path,
+            &db_path,
+        ).trim().as_bytes()).await?;
+        Ok(())
     }
 
     async fn clone_host(path: &Path) -> std::io::Result<ExitStatus> {
@@ -233,4 +246,15 @@ impl FileWatcher {
 
         Ok(())
     }
+}
+
+async fn create_file_if_not_exists(path: &Path, content: &[u8]) -> Result<()> {
+    if !tokio::fs::try_exists(path).await? {
+        let file = File::create(path).await?;
+        let mut writer = BufWriter::new(file);
+        writer.write_all(content).await?;
+        writer.flush().await?;
+    }
+
+    Ok(())
 }

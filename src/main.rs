@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tracing::info;
+use tracing::{error, info};
 use anyhow::Result;
 use client::ChatResponse;
 use futures::StreamExt;
@@ -14,6 +14,7 @@ mod logger;
 mod message;
 mod shared;
 mod tui;
+mod widget;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -30,6 +31,7 @@ async fn main() -> Result<()> {
         tui.run().await;
     });
 
+    // wait for host to return ip and port
     let (ip, port) = loop {
         tokio::select! {
             _ = signal::ctrl_c() => return Ok(()),
@@ -46,6 +48,7 @@ async fn main() -> Result<()> {
                             info!("Host listen: {}:{}", _ip, _port);
                             break (_ip, _port);
                         } else {
+                            error!("Failed to get host listen: {:?}", msg);
                             return Err(anyhow::anyhow!("Failed to get host listen"));
                         }
                     },
@@ -57,11 +60,13 @@ async fn main() -> Result<()> {
         }
     };
 
+    // make sure host is running
     let client = client::ChatClient::new(ip, port);
     if let Err(e) = client.wait_for_server().await {
         return Err(e);
     }
 
+    // main loop
     loop {
         tokio::select! {
             _ = signal::ctrl_c() => break,
@@ -89,13 +94,13 @@ async fn main() -> Result<()> {
                                     }
                                 },
                                 MessageInfo(message_info) => {
-                                    todo!()
+
                                 },
                                 ToolCalls(tool_calls) => {
-                                    todo!()
+
                                 },
                                 ToolResult(tool_results) => {
-                                    todo!()
+
                                 },
                             }
                         }

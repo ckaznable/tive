@@ -1,4 +1,8 @@
-use std::{collections::HashMap, pin::Pin, time::Duration};
+use std::{
+    collections::HashMap,
+    pin::Pin,
+    time::Duration,
+};
 
 use anyhow::Result;
 use futures::Stream;
@@ -116,7 +120,7 @@ impl ChatClient {
                 ChatResponse::Text(text) => {
                     message.push_str(&text);
                 }
-                _ => {}
+                _ => ()
             }
         }
 

@@ -2,7 +2,7 @@ use crossterm::event::EventStream;
 use ratatui::{
     crossterm::event::{Event, KeyCode},
     style::{Color, Style},
-    widgets::{Block, Borders},
+    widgets::{Block, BorderType, Borders},
 };
 use futures_util::{FutureExt, StreamExt};
 use ratatui::{
@@ -12,9 +12,12 @@ use ratatui::{
 use tokio::sync::mpsc::{Receiver, Sender};
 use tui_textarea::TextArea;
 
-use crate::shared::{UIAction, UIActionResult};
+use crate::{
+    shared::{UIAction, UIActionResult},
+    widget::status_bar::StatusBar,
+};
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 pub enum InputMode {
     #[default]
     Normal,
@@ -56,12 +59,7 @@ impl<'a> Tui<'a> {
             }
 
             // style for input
-            self.set_input_block(
-                self.get_input_block(
-                    match self.mode {
-                        InputMode::Normal => Style::default().fg(Color::Blue),
-                        InputMode::Insert => Style::default().fg(Color::LightGreen),
-                    }));
+            self.tick_input_state();
 
             terminal.draw(|f| Self::draw(f, &self)).expect("failed to draw frame");
 
@@ -90,11 +88,25 @@ impl<'a> Tui<'a> {
         }
     }
 
+    fn tick_input_state(&mut self) {
+        let style = if self.streaming {
+            Style::default().fg(Color::LightGreen)
+        } else {
+            match self.mode {
+                InputMode::Normal => Style::default().fg(Color::Blue),
+                InputMode::Insert => Style::default().fg(Color::LightGreen),
+            }
+        };
+
+        self.set_input_block(self.get_input_block(style));
+    }
+
     #[inline]
     fn get_input_block(&self, style: Style) -> Block<'a> {
         Block::default()
             .borders(Borders::ALL)
             .border_style(style)
+            .border_type(BorderType::Rounded)
             .title("Chat")
     }
 
@@ -118,7 +130,11 @@ impl<'a> Tui<'a> {
 
         match event.code {
             KeyCode::Char('q') => self.quit = true,
-            KeyCode::Char('i' | 'a') => self.mode = InputMode::Insert,
+            KeyCode::Char('i' | 'a') => {
+                if !self.streaming {
+                    self.mode = InputMode::Insert;
+                }
+            },
             _ => (),
         }
     }
@@ -137,6 +153,7 @@ impl<'a> Tui<'a> {
 
                 self.text.clear();
                 self.streaming = true;
+                self.mode = InputMode::Normal;
 
                 let tx = self.tx.clone();
                 let message = self.input.lines().join("\n");
@@ -155,14 +172,16 @@ impl<'a> Tui<'a> {
     }
 
     fn draw(frame: &mut Frame, s: &Self) {
-        let [chat, input] = Layout::vertical([
+        let [chat, input, status_bar] = Layout::vertical([
             Constraint::Min(1),
             Constraint::Length(5),
+            Constraint::Length(2),
         ])
         .areas(frame.area());
 
         frame.render_widget(&s.input, input);
         frame.render_widget(&s.text, chat);
+        frame.render_widget(StatusBar { mode: s.mode }, status_bar);
     }
 }
 
