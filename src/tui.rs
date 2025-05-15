@@ -13,8 +13,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tui_textarea::TextArea;
 
 use crate::{
-    shared::{UIAction, UIActionResult},
-    widget::status_bar::StatusBar,
+    chat::ChatReader, shared::{UIAction, UIActionResult}, widget::status_bar::StatusBar
 };
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -33,13 +32,15 @@ pub struct Tui<'a> {
     rx: Receiver<UIActionResult>,
     text: String,
     streaming: bool,
+    chat_reader: ChatReader,
 }
 
 impl<'a> Tui<'a> {
-    pub fn new(tx: Sender<UIAction>, rx: Receiver<UIActionResult>) -> Self {
+    pub fn new(tx: Sender<UIAction>, rx: Receiver<UIActionResult>, chat_reader: ChatReader) -> Self {
         Self {
             tx,
             rx,
+            chat_reader,
             quit: false,
             mode: InputMode::default(),
             input: TextArea::default(),

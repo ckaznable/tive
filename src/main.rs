@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use chat::ChatThread;
 use tracing::{error, info};
 use anyhow::Result;
 use client::ChatResponse;
@@ -8,6 +9,7 @@ use host::{HostEvent, HostListen, HostServer};
 use shared::{UIAction, UIActionResult};
 use tokio::{signal, sync::mpsc};
 
+mod chat;
 mod client;
 mod host;
 mod logger;
@@ -26,8 +28,11 @@ async fn main() -> Result<()> {
     let (tx_ui, mut rx_ui) = mpsc::channel(1);
     let (tx_host, rx_host) = mpsc::channel(1);
 
+    let chat_thread = ChatThread::default();
+    let (mut chat_writer, chat_reader) = chat_thread.split();
+
     let tui_handle = tokio::spawn(async move {
-        let mut tui = tui::Tui::new(tx_ui, rx_host);
+        let mut tui = tui::Tui::new(tx_ui, rx_host, chat_reader);
         tui.run().await;
     });
 
@@ -82,6 +87,7 @@ async fn main() -> Result<()> {
                             match response {
                                 Text(text)=> {
                                     if let Some(id) = &chat_id {
+                                        chat_writer.mut_ai_message().content.push_str(&text);
                                         tx_host.send(UIActionResult::Chat {
                                             id: id.clone(),
                                             content: text,
@@ -90,11 +96,14 @@ async fn main() -> Result<()> {
                                 },
                                 ChatInfo(chat_info) => {
                                     if chat_id.is_none() {
+                                        chat_writer.mut_user_message().chat_id = chat_info.id.clone();
                                         chat_id = Some(Arc::new(chat_info.id));
                                     }
                                 },
                                 MessageInfo(message_info) => {
-
+                                    let crate::client::MessageInfo { user_message_id , assistant_message_id } = message_info;
+                                    chat_writer.mut_user_message().message_id = user_message_id;
+                                    chat_writer.mut_ai_message().message_id = assistant_message_id;
                                 },
                                 ToolCalls(tool_calls) => {
 
@@ -105,6 +114,7 @@ async fn main() -> Result<()> {
                             }
                         }
 
+                        chat_writer.flush().await?;
                         tx_host.send(UIActionResult::End).await?;
                     }
                 }

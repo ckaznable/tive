@@ -111,22 +111,6 @@ impl ChatClient {
         }
     }
 
-    pub async fn chat(&self, message: &str) -> Result<String> {
-        let mut stream = self.chat_stream(message);
-
-        let mut message = String::with_capacity(1024);
-        while let Some(response) = stream.next().await {
-            match response? {
-                ChatResponse::Text(text) => {
-                    message.push_str(&text);
-                }
-                _ => ()
-            }
-        }
-
-        Ok(message)
-    }
-
     pub async fn wait_for_server(&self) -> Result<()> {
         let client = self.client.clone();
         let url = self.url("ping");
