@@ -5,11 +5,6 @@ use std::{
 
 use directories::{ProjectDirs, UserDirs};
 
-pub const TEMP_USER_MESSAGE_ID: &str = "@user";
-pub const TEMP_USER_CHAT_ID: &str = "@user-chat";
-pub const TEMP_AI_MESSAGE_ID: &str = "@ai";
-pub const TEMP_AI_CHAT_ID: &str = "@ai-chat";
-
 pub static PROJECT_NAME: LazyLock<String> = LazyLock::new(|| env!("CARGO_CRATE_NAME").to_uppercase().to_string());
 pub static PROJECT_DIRS: LazyLock<Dirs> = LazyLock::new(|| {
     ProjectDirs::from("", "", "tive")

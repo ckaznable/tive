@@ -1,8 +1,17 @@
-use std::{ops::Deref, sync::Arc};
+use std::{
+    ops::Deref,
+    sync::{
+        atomic::{
+            AtomicBool,
+            Ordering
+        },
+        Arc
+    },
+};
 
-use anyhow::{anyhow, Result};
-use crate::{message::{BaseMessage, Message}};
-use tokio::sync::{mpsc, Mutex};
+use anyhow::Result;
+use crate::message::{AIMessage, BaseMessage, Message, UserMessage};
+use tokio::sync::{Mutex};
 
 #[derive(Debug, Clone)]
 pub struct ChatThread {
@@ -19,10 +28,10 @@ impl Default for ChatThread {
 
 impl ChatThread {
     pub fn split(self) -> (ChatWriter, ChatReader) {
-        let (tx, rx) = mpsc::channel(1);
+        let update_flag = Arc::new(AtomicBool::new(false));
         (
             ChatWriter {
-                notify_reader_tx: tx,
+                update_flag: update_flag.clone(),
                 thread: self.inner.clone(),
                 user_message: None,
                 ai_message: None,
@@ -32,7 +41,7 @@ impl ChatThread {
                 thread: self.inner.clone(),
                 thread_id: None,
                 messages: vec![],
-                notify_update_rx: rx,
+                update_flag: update_flag.clone(),
             }
         )
     }
@@ -55,17 +64,19 @@ pub struct ChatThreadInner {
 #[derive(Debug, Clone)]
 pub struct ChatWriter {
     thread: Arc<Mutex<ChatThreadInner>>,
-    notify_reader_tx: mpsc::Sender<()>,
+    update_flag: Arc<AtomicBool>,
     pub user_message: Option<BaseMessage>,
     pub ai_message: Option<BaseMessage>,
     pub thread_id: Option<String>,
 }
 
 impl ChatWriter {
+    #[inline]
     pub fn mut_user_message(&mut self) -> &mut BaseMessage {
         self.user_message.get_or_insert_default()
     }
 
+    #[inline]
     pub fn mut_ai_message(&mut self) -> &mut BaseMessage {
         self.ai_message.get_or_insert_default()
     }
@@ -76,10 +87,10 @@ impl ChatWriter {
         thread.id = self.thread_id.take();
 
         let user_message = self.user_message.take()
-            .map(|msg| Message::UserMessage { body: msg })
+            .map(|msg| Message::UserMessage(UserMessage { body: msg }))
             .map(Arc::new);
         let ai_message = self.ai_message.take()
-            .map(|msg| Message::AIMessage { body: msg, tool_calls: vec![], files: vec![] })
+            .map(|msg| Message::AIMessage(AIMessage { body: msg, tool_calls: vec![], files: vec![] }))
             .map(Arc::new);
 
         if let Some(user_message) = user_message.clone() {
@@ -90,7 +101,7 @@ impl ChatWriter {
             thread.messages.push(ai_message);
         }
 
-        let _ = self.notify_reader_tx.try_send(());
+        self.update_flag.store(true, Ordering::Release);
         Ok((user_message, ai_message))
     }
 }
@@ -100,25 +111,20 @@ pub struct ChatReader {
     thread: Arc<Mutex<ChatThreadInner>>,
     thread_id: Option<String>,
     messages: Vec<Arc<Message>>,
-    notify_update_rx: mpsc::Receiver<()>,
+    update_flag: Arc<AtomicBool>,
 }
 
 impl ChatReader {
-    pub async fn read(&mut self) -> Result<&[Arc<Message>]> {
-        let updated = match self.notify_update_rx.try_recv() {
-            Ok(_) => true,
-            Err(mpsc::error::TryRecvError::Empty) => false,
-            Err(mpsc::error::TryRecvError::Disconnected) => {
-                return Err(anyhow!("Writer closed"));
-            }
-        };
+    pub async fn read(&mut self) -> &[Arc<Message>] {
+        let updated = self.update_flag.load(Ordering::Relaxed);
 
         if updated {
+            self.update_flag.store(false, Ordering::Release);
             let thread = self.thread.lock().await;
             self.messages.clear();
             self.messages.extend(thread.messages.iter().cloned());
         }
 
-        Ok(&self.messages)
+        &self.messages
     }
 }
