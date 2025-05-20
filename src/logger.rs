@@ -12,7 +12,7 @@ pub static LOG_ENV: LazyLock<String> = LazyLock::new(|| format!("{}_LOGLEVEL", *
 pub static LOG_FILE: LazyLock<String> = LazyLock::new(|| format!("{}.log", *PROJECT_NAME));
 
 fn project_directory() -> Option<ProjectDirs> {
-    ProjectDirs::from("com", "kdheepak", env!("CARGO_PKG_NAME"))
+    ProjectDirs::from("io", "ckaznable", env!("CARGO_PKG_NAME"))
 }
 
 pub fn get_data_dir() -> PathBuf {
