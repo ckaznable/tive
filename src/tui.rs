@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use crossterm::event::{EventStream, KeyEvent};
+use tracing::info;
+use crossterm::event::{EventStream, KeyEvent, KeyModifiers};
 use ratatui::{
     crossterm::event::{ Event, KeyCode },
     layout::Rect,
@@ -16,7 +17,10 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tui_textarea::TextArea;
 
 use crate::{
-    chat::ChatReader, message::{AIMessage, Message, UserMessage}, shared::{UIAction, UIActionResult}, widget::{self, message::MessageState, status_bar::StatusBar}
+    chat::ChatReader,
+    message::{AIMessage, MessageFrame, UserMessage},
+    shared::{UIAction, UIActionResult},
+    widget::{self, message::MessageState, status_bar::StatusBar},
 };
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -38,6 +42,8 @@ pub struct Tui<'a> {
     streaming: bool,
     chat_reader: Option<ChatReader>,
     message_state: Option<MessageState>,
+    ct_index: usize,
+    thread_len: usize,
 }
 
 impl<'a> Tui<'a> {
@@ -53,6 +59,8 @@ impl<'a> Tui<'a> {
             ai_message: AIMessage::default(),
             streaming: false,
             message_state: None,
+            ct_index: 0,
+            thread_len: 0,
         }
     }
 
@@ -77,6 +85,7 @@ impl<'a> Tui<'a> {
 
             // get current chat to render to viewport
             let ct = cr.read().await;
+            self.thread_len = ct.len();
 
             terminal.draw(|f| draw(f, &mut self, ct)).expect("failed to draw frame");
 
@@ -98,6 +107,7 @@ impl<'a> Tui<'a> {
                         },
                         End => {
                             self.streaming = false;
+                            self.ct_index = if self.ct_index > 0 { self.ct_index.saturating_add(1) } else { 0 };
                         },
                     }
                 },
@@ -157,6 +167,15 @@ impl<'a> Tui<'a> {
             KeyCode::Char('k') => {
                 self.message_state.as_mut().unwrap().scroll_up();
             }
+            KeyCode::Char('n') if event.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.ct_index = self.ct_index.saturating_sub(1);
+            }
+            KeyCode::Char('p') if event.modifiers.contains(KeyModifiers::CONTROL) => {
+                let index = self.ct_index.saturating_add(1);
+                if index < self.thread_len {
+                    self.ct_index = index;
+                }
+            }
             _ => (),
         }
     }
@@ -165,14 +184,18 @@ impl<'a> Tui<'a> {
         match event.code {
             KeyCode::Esc => self.mode = InputMode::Normal,
             KeyCode::Enter => {
+                if self.streaming {
+                    return;
+                }
+
                 if self.input.is_empty() {
                     return;
                 }
 
+                self.ai_message.body.content.clear();
                 self.user_message.body.content.clear();
                 self.user_message.body.content.push_str(&self.input.lines().join("\n"));
                 self.streaming = true;
-                self.mode = InputMode::Normal;
 
                 let tx = self.tx.clone();
                 let message = self.input.lines().join("\n");
@@ -189,7 +212,6 @@ impl<'a> Tui<'a> {
             },
         }
     }
-
 }
 
 impl<'a> Drop for Tui<'a> {
@@ -199,22 +221,22 @@ impl<'a> Drop for Tui<'a> {
 }
 
 #[inline]
-fn get_chat_to_render<'b>(streaming: bool, def: (&'b UserMessage, &'b AIMessage), global_chat: &'b [Arc<Message>]) -> (&'b UserMessage, &'b AIMessage) {
-    if streaming {
-        def
-    } else {
-        if global_chat.len() < 2 {
-            return def;
-        }
-
-        let ai = global_chat.last().unwrap().as_ai_message();
-        let user = global_chat[global_chat.len() - 2].as_user_message();
-        if let (Some(ai), Some(user)) = (ai, user) {
-            (user, ai)
-        } else {
-            def
-        }
+fn get_chat_to_render<'b>(streaming: bool, index: usize, def: (&'b UserMessage, &'b AIMessage), ct: &'b [Arc<MessageFrame>]) -> (&'b UserMessage, &'b AIMessage) {
+    if ct.len() < 2 {
+        return def;
     }
+
+    if streaming && index == 0 {
+        return def;
+    }
+
+    let index = if index >= ct.len() { ct.len() - 1 } else { index };
+    let Some(msg) = ct.get(ct.len() - index - 1) else {
+        info!("ct index out of bounds");
+        return def;
+    };
+
+    msg.split_ref()
 }
 
 #[inline]
@@ -229,14 +251,14 @@ fn layout(area: Rect) -> [Rect; 3] {
     [chat, input, status_bar]
 }
 
-fn draw(frame: &mut Frame, state: &mut Tui, current_ct: &[Arc<Message>]) {
+fn draw(frame: &mut Frame, state: &mut Tui, current_ct: &[Arc<MessageFrame>]) {
     let area = frame.area();
 
     // prepare message state
     let msg_state = state.message_state.as_mut().unwrap();
     msg_state.set_viewport(area);
     let chat_buf = (&state.user_message, &state.ai_message);
-    let (user, ai) = get_chat_to_render(state.streaming, chat_buf, current_ct);
+    let (user, ai) = get_chat_to_render(state.streaming, state.ct_index, chat_buf, current_ct);
     msg_state.pre_render(user, ai);
 
     let [chat, input, status_bar] = layout(area);

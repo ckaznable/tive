@@ -9,8 +9,9 @@ use std::{
     },
 };
 
+use tracing::info;
 use anyhow::Result;
-use crate::message::{AIMessage, BaseMessage, Message, UserMessage};
+use crate::message::{AIMessage, BaseMessage, Message, MessageFrame, UserMessage};
 use tokio::sync::{Mutex};
 
 #[derive(Debug, Clone)]
@@ -58,7 +59,7 @@ impl Deref for ChatThread {
 #[derive(Debug, Default)]
 pub struct ChatThreadInner {
     pub id: Option<String>,
-    pub messages: Vec<Arc<Message>>,
+    pub messages: Vec<Arc<MessageFrame>>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,28 +82,33 @@ impl ChatWriter {
         self.ai_message.get_or_insert_default()
     }
 
-    pub async fn flush(&mut self) -> Result<(Option<Arc<Message>>, Option<Arc<Message>>)> {
+    pub async fn flush(&mut self) -> Result<Arc<MessageFrame>> {
         let mut thread = self.thread.lock().await;
 
         thread.id = self.thread_id.take();
 
-        let user_message = self.user_message.take()
+        let user_message: Option<UserMessage> = self.user_message.take()
             .map(|msg| Message::UserMessage(UserMessage { body: msg }))
-            .map(Arc::new);
-        let ai_message = self.ai_message.take()
+            .map(|msg| msg.try_into().ok())
+            .flatten();
+        let ai_message: Option<AIMessage> = self.ai_message.take()
             .map(|msg| Message::AIMessage(AIMessage { body: msg, tool_calls: vec![], files: vec![] }))
-            .map(Arc::new);
+            .map(|msg| msg.try_into().ok())
+            .flatten();
 
-        if let Some(user_message) = user_message.clone() {
-            thread.messages.push(user_message);
-        }
+        let (Some(user_message), Some(ai_message)) = (user_message.clone(), ai_message.clone()) else {
+            return Ok(Arc::new(MessageFrame::default()));
+        };
 
-        if let Some(ai_message) = ai_message.clone() {
-            thread.messages.push(ai_message);
-        }
+        let frame = Arc::new(MessageFrame {
+            ai: ai_message,
+            user: user_message,
+        });
 
+        info!("flushed frame: user: {:?}, ai: {:?}", frame.user.id, frame.ai.id);
+        thread.messages.push(frame.clone());
         self.update_flag.store(true, Ordering::Release);
-        Ok((user_message, ai_message))
+        Ok(frame)
     }
 }
 
@@ -110,12 +116,12 @@ impl ChatWriter {
 pub struct ChatReader {
     thread: Arc<Mutex<ChatThreadInner>>,
     thread_id: Option<String>,
-    messages: Vec<Arc<Message>>,
+    messages: Vec<Arc<MessageFrame>>,
     update_flag: Arc<AtomicBool>,
 }
 
 impl ChatReader {
-    pub async fn read(&mut self) -> &[Arc<Message>] {
+    pub async fn read(&mut self) -> &[Arc<MessageFrame>] {
         let updated = self.update_flag.load(Ordering::Relaxed);
 
         if updated {

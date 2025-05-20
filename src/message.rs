@@ -44,37 +44,6 @@ pub enum Message {
     ToolCallResult(ToolCallResult),
 }
 
-impl Message {
-    pub fn body(&self) -> &BaseMessage {
-        match self {
-            Message::AIMessage(msg) => &msg.body,
-            Message::UserMessage(msg) => &msg.body,
-            Message::ToolCallResult(msg) => &msg.body,
-        }
-    }
-
-    pub fn as_ai_message(&self) -> Option<&AIMessage> {
-        match self {
-            Message::AIMessage(msg) => Some(msg),
-            _ => None,
-        }
-    }
-
-    pub fn as_user_message(&self) -> Option<&UserMessage> {
-        match self {
-            Message::UserMessage(msg) => Some(msg),
-            _ => None,
-        }
-    }
-
-    pub fn as_tool_call_result(&self) -> Option<&ToolCallResult> {
-        match self {
-            Message::ToolCallResult(msg) => Some(msg),
-            _ => None,
-        }
-    }
-}
-
 #[derive(Debug, Deserialize, Clone)]
 pub struct ToolCall {
     pub name: String,
@@ -99,6 +68,17 @@ impl Deref for AIMessage {
     }
 }
 
+impl TryFrom<Message> for AIMessage {
+    type Error = anyhow::Error;
+
+    fn try_from(value: Message) -> Result<Self, Self::Error> {
+        match value {
+            Message::AIMessage(msg) => Ok(msg),
+            _ => Err(anyhow::anyhow!("expected ai message")),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct UserMessage {
     #[serde(flatten)]
@@ -113,6 +93,17 @@ impl Deref for UserMessage {
     }
 }
 
+impl TryFrom<Message> for UserMessage {
+    type Error = anyhow::Error;
+
+    fn try_from(value: Message) -> Result<Self, Self::Error> {
+        match value {
+            Message::UserMessage(msg) => Ok(msg),
+            _ => Err(anyhow::anyhow!("expected user message")),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct ToolCallResult {
     #[serde(flatten)]
@@ -124,5 +115,17 @@ impl Deref for ToolCallResult {
 
     fn deref(&self) -> &Self::Target {
         &self.body
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MessageFrame {
+    pub ai: AIMessage,
+    pub user: UserMessage,
+}
+
+impl MessageFrame {
+    pub fn split_ref(&self) -> (&UserMessage, &AIMessage) {
+        (&self.user, &self.ai)
     }
 }

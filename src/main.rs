@@ -81,6 +81,7 @@ async fn main() -> Result<()> {
                     UIAction::Chat { id, message } => {
                         let mut stream = client.chat_stream(&message);
                         let mut chat_id: Option<Arc<String>> = id.map(Arc::new);
+                        chat_writer.mut_user_message().content = message;
 
                         use ChatResponse::*;
                         while let Some(Ok(response)) = stream.next().await {
