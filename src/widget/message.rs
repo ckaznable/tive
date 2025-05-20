@@ -32,6 +32,11 @@ impl MessageState {
         }
     }
 
+    pub fn reset(&mut self) {
+        self.scroll_y = 0;
+        self.buf.reset();
+    }
+
     pub fn set_viewport(&mut self, viewport: Rect) {
         self.viewport = viewport;
     }

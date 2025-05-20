@@ -21,6 +21,11 @@ use serde::Deserialize;
 
 use crate::shared::PROJECT_DIRS;
 
+pub const COMMAND_ALIAS_FILE: &str = "command_alias.json";
+pub const CUSTOM_RULES_FILE: &str = "customrules";
+pub const MCP_CONFIG_FILE: &str = "mcp_config.json";
+pub const MODEL_CONFIG_FILE: &str = "model_config.json";
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct HostStatus {
     state: String,
@@ -115,10 +120,10 @@ impl HostProcess {
     }
 
     async fn init_host_config(&self, config_dir: &Path, db_dir: &Path) -> Result<()> {
-        create_file_if_not_exists(&config_dir.join("command_alias.json"), b"{}").await?;
-        create_file_if_not_exists(&config_dir.join("customrules"), b"").await?;
-        create_file_if_not_exists(&config_dir.join("mcp_config.json"), b"{\"mcpServers\":{}}").await?;
-        create_file_if_not_exists(&config_dir.join("model_config.json"), b"{\"activeProvider\":\"openai-0-0\",\"enableTools\":true,\"disableDiveSystemPrompt\":false}").await?;
+        create_file_if_not_exists(&config_dir.join(COMMAND_ALIAS_FILE), b"{}").await?;
+        create_file_if_not_exists(&config_dir.join(CUSTOM_RULES_FILE), b"").await?;
+        create_file_if_not_exists(&config_dir.join(MCP_CONFIG_FILE), b"{\"mcpServers\":{}}").await?;
+        create_file_if_not_exists(&config_dir.join(MODEL_CONFIG_FILE), b"{\"activeProvider\":\"fake\",\"enableTools\":true,\"disableDiveSystemPrompt\":false}").await?;
 
         let db_path = db_dir.to_string_lossy().to_string();
         create_file_if_not_exists(&config_dir.join("dive_httpd.json"), format!("{{

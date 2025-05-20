@@ -32,8 +32,8 @@ async fn main() -> Result<()> {
     let (mut chat_writer, chat_reader) = chat_thread.split();
 
     let tui_handle = tokio::spawn(async move {
-        let mut tui = tui::Tui::new(tx_ui, rx_host, chat_reader);
-        tui.run().await;
+        let tui = tui::Tui::new(tx_ui, rx_host);
+        tui.run(chat_reader).await;
     });
 
     // wait for host to return ip and port

@@ -1,25 +1,31 @@
-use std::sync::Arc;
+use std::{io::stdout, sync::Arc};
 
-use tracing::info;
-use crossterm::event::{EventStream, KeyEvent, KeyModifiers};
+use anyhow::Result;
+use tracing::{error, info};
+use crossterm::{
+    event::{EventStream, KeyEvent, KeyModifiers},
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    ExecutableCommand,
+};
 use ratatui::{
     crossterm::event::{ Event, KeyCode },
     layout::Rect,
     style::{Color, Style},
-    widgets::{Block, BorderType, Borders},
+    widgets::{Block, BorderType, Borders}, DefaultTerminal,
 };
 use futures_util::{FutureExt, StreamExt};
 use ratatui::{
     layout::{Constraint, Layout},
     Frame,
 };
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::{process::Command, sync::mpsc::{Receiver, Sender}};
 use tui_textarea::TextArea;
 
 use crate::{
     chat::ChatReader,
+    host::{MCP_CONFIG_FILE, MODEL_CONFIG_FILE},
     message::{AIMessage, MessageFrame, UserMessage},
-    shared::{UIAction, UIActionResult},
+    shared::{UIAction, UIActionResult, PROJECT_DIRS},
     widget::{self, message::MessageState, status_bar::StatusBar},
 };
 
@@ -28,6 +34,13 @@ pub enum InputMode {
     #[default]
     Normal,
     Insert,
+    Leader,
+    EditFile,
+}
+
+#[derive(Debug, Clone)]
+enum TuiInnerAction {
+    OpenEditor(String),
 }
 
 #[derive(Debug)]
@@ -37,21 +50,25 @@ pub struct Tui<'a> {
     input: TextArea<'a>,
     tx: Sender<UIAction>,
     rx: Receiver<UIActionResult>,
+    inner_tx: Sender<TuiInnerAction>,
+    inner_rx: Receiver<TuiInnerAction>,
     user_message: UserMessage,
     ai_message: AIMessage,
     streaming: bool,
-    chat_reader: Option<ChatReader>,
     message_state: Option<MessageState>,
     ct_index: usize,
     thread_len: usize,
 }
 
 impl<'a> Tui<'a> {
-    pub fn new(tx: Sender<UIAction>, rx: Receiver<UIActionResult>, chat_reader: ChatReader) -> Self {
+    pub fn new(tx: Sender<UIAction>, rx: Receiver<UIActionResult>) -> Self {
+        let (inner_tx, inner_rx) = tokio::sync::mpsc::channel(1);
+
         Self {
             tx,
             rx,
-            chat_reader: Some(chat_reader),
+            inner_tx,
+            inner_rx,
             quit: false,
             mode: InputMode::default(),
             input: TextArea::default(),
@@ -64,15 +81,13 @@ impl<'a> Tui<'a> {
         }
     }
 
-    pub async fn run(mut self) {
+    pub async fn run(mut self, mut cr: ChatReader) {
         let mut terminal = ratatui::init();
         let mut reader = EventStream::new();
 
         let frame = terminal.get_frame();
         let [chat_viewport, _, _] = layout(frame.area());
         self.message_state = Some(MessageState::new(chat_viewport));
-
-        let mut cr = self.chat_reader.take().unwrap();
 
         loop {
             if self.quit {
@@ -111,8 +126,31 @@ impl<'a> Tui<'a> {
                         },
                     }
                 },
+                Some(evt) = self.inner_rx.recv() => {
+                    use TuiInnerAction::*;
+                    match evt {
+                        OpenEditor(path) => {
+                            info!("opening editor: {}", path);
+                            if let Err(_) = self.open_editor(&mut terminal, path).await {
+                                error!("failed to open editor");
+                            };
+                        }
+                    }
+                },
             }
         }
+    }
+
+    async fn open_editor(&mut self, terminal: &mut DefaultTerminal, path: String) -> Result<()> {
+        stdout().execute(LeaveAlternateScreen)?;
+        disable_raw_mode()?;
+        let editor = std::env::var("EDITOR").unwrap_or("vim".to_string());
+        let status = Command::new(editor).arg(path).status().await?;
+        info!("editor exited with status: {}", status);
+        stdout().execute(EnterAlternateScreen)?;
+        enable_raw_mode()?;
+        terminal.clear()?;
+        Ok(())
     }
 
     fn tick_input_state(&mut self) {
@@ -120,8 +158,8 @@ impl<'a> Tui<'a> {
             Style::default().fg(Color::LightGreen)
         } else {
             match self.mode {
-                InputMode::Normal => Style::default().fg(Color::Blue),
                 InputMode::Insert => Style::default().fg(Color::LightGreen),
+                _ => Style::default().fg(Color::Blue),
             }
         };
 
@@ -146,8 +184,10 @@ impl<'a> Tui<'a> {
     async fn handle_input_event(&mut self, event: Event) {
         match event {
             Event::Key(e) => match self.mode {
-                InputMode::Normal => self.handle_normal_key_event(e).await,
                 InputMode::Insert => self.handle_insert_key_event(e).await,
+                InputMode::Leader => self.handle_leader_key_event(e).await,
+                InputMode::EditFile => self.handle_edit_file_key_event(e).await,
+                _ => self.handle_normal_key_event(e).await,
             }
             _ => (),
         }
@@ -168,13 +208,18 @@ impl<'a> Tui<'a> {
                 self.message_state.as_mut().unwrap().scroll_up();
             }
             KeyCode::Char('n') if event.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.message_state.as_mut().unwrap().reset();
                 self.ct_index = self.ct_index.saturating_sub(1);
             }
             KeyCode::Char('p') if event.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.message_state.as_mut().unwrap().reset();
                 let index = self.ct_index.saturating_add(1);
                 if index < self.thread_len {
                     self.ct_index = index;
                 }
+            }
+            KeyCode::Char(' ') => {
+                self.mode = InputMode::Leader;
             }
             _ => (),
         }
@@ -192,6 +237,7 @@ impl<'a> Tui<'a> {
                     return;
                 }
 
+                self.message_state.as_mut().unwrap().reset();
                 self.ai_message.body.content.clear();
                 self.user_message.body.content.clear();
                 self.user_message.body.content.push_str(&self.input.lines().join("\n"));
@@ -212,6 +258,33 @@ impl<'a> Tui<'a> {
             },
         }
     }
+
+    async fn handle_leader_key_event(&mut self, event: KeyEvent) {
+        match event.code {
+            KeyCode::Char('e') => {
+                self.mode = InputMode::EditFile;
+            }
+            _ => {
+                self.mode = InputMode::Normal;
+                self.handle_normal_key_event(event).await;
+            },
+        }
+    }
+
+    async fn handle_edit_file_key_event(&mut self, event: KeyEvent) {
+        self.mode = InputMode::Normal;
+        match event.code {
+            KeyCode::Char('m') => {
+                let _ = self.inner_tx.send(TuiInnerAction::OpenEditor(PROJECT_DIRS.host_config_dir().join(MODEL_CONFIG_FILE).to_string_lossy().to_string())).await;
+            }
+            KeyCode::Char('s') => {
+                let _ = self.inner_tx.send(TuiInnerAction::OpenEditor(PROJECT_DIRS.host_config_dir().join(MCP_CONFIG_FILE).to_string_lossy().to_string())).await;
+            }
+            _ => {
+                self.handle_normal_key_event(event).await;
+            },
+        }
+    }
 }
 
 impl<'a> Drop for Tui<'a> {
@@ -222,7 +295,7 @@ impl<'a> Drop for Tui<'a> {
 
 #[inline]
 fn get_chat_to_render<'b>(streaming: bool, index: usize, def: (&'b UserMessage, &'b AIMessage), ct: &'b [Arc<MessageFrame>]) -> (&'b UserMessage, &'b AIMessage) {
-    if ct.len() < 2 {
+    if ct.len() < 1 {
         return def;
     }
 
