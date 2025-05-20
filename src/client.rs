@@ -14,7 +14,8 @@ use tokio::time::timeout;
 #[derive(Debug, Deserialize)]
 pub struct ChatInfo {
     pub id: String,
-    pub title: String,
+    #[serde(rename = "title")]
+    pub _title: String,
 }
 
 #[derive(Debug, Deserialize)]
