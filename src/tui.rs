@@ -254,14 +254,14 @@ fn layout(area: Rect) -> [Rect; 3] {
 fn draw(frame: &mut Frame, state: &mut Tui, current_ct: &[Arc<MessageFrame>]) {
     let area = frame.area();
 
+    let [chat, input, status_bar] = layout(area);
+
     // prepare message state
     let msg_state = state.message_state.as_mut().unwrap();
-    msg_state.set_viewport(area);
+    msg_state.set_viewport(chat);
     let chat_buf = (&state.user_message, &state.ai_message);
     let (user, ai) = get_chat_to_render(state.streaming, state.ct_index, chat_buf, current_ct);
     msg_state.pre_render(user, ai);
-
-    let [chat, input, status_bar] = layout(area);
 
     frame.render_widget(&state.input, input);
     frame.render_widget(StatusBar { mode: state.mode }, status_bar);
