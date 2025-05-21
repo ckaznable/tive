@@ -57,7 +57,7 @@ impl Dirs {
 pub enum UIAction {
     Quit,
     Chat {
-        id: Option<String>,
+        id: Option<Arc<String>>,
         message: String,
     },
 }

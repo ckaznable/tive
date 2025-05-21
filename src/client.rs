@@ -78,8 +78,12 @@ impl ChatClient {
         format!("http://{}:{}/{}", self.ip, self.port, path)
     }
 
-    pub fn chat_stream(&self, message: &str) -> ChatResponseStream {
-        let params = HashMap::from([("message", message)]);
+    pub fn chat_stream(&self, message: &str, id: Option<&str>) -> ChatResponseStream {
+        let mut params = HashMap::from([("message", message)]);
+        if let Some(id) = id {
+            params.insert("chatId", id);
+        }
+
         let url = self.url("api/chat");
 
         let request = self.client.post(url).form(&params);

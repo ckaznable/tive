@@ -79,8 +79,9 @@ async fn main() -> Result<()> {
                 match evt {
                     UIAction::Quit => break,
                     UIAction::Chat { id, message } => {
-                        let mut stream = client.chat_stream(&message);
-                        let mut chat_id: Option<Arc<String>> = id.map(Arc::new);
+                        info!("Chat: {:?}", id);
+                        let mut stream = client.chat_stream(&message, id.as_deref().map(|s| s.as_str()));
+                        let mut chat_id: Option<Arc<String>> = id;
                         chat_writer.mut_user_message().content = message;
 
                         use ChatResponse::*;

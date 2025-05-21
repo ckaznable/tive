@@ -59,6 +59,7 @@ pub struct Tui<'a> {
     message_state: Option<MessageState>,
     ct_index: usize,
     thread_len: usize,
+    chat_id: Option<Arc<String>>,
 }
 
 impl<'a> Tui<'a> {
@@ -79,6 +80,7 @@ impl<'a> Tui<'a> {
             message_state: None,
             ct_index: 0,
             thread_len: 0,
+            chat_id: None,
         }
     }
 
@@ -132,8 +134,9 @@ impl<'a> Tui<'a> {
                 Some(evt) = self.rx.recv() => {
                     use UIActionResult::*;
                     match evt {
-                        Chat { content, .. } => {
+                        Chat { content, id } => {
                             self.ai_message.body.content.push_str(&content);
+                            self.chat_id = Some(id);
                         },
                         End => {
                             self.streaming = false;
@@ -269,15 +272,15 @@ impl<'a> Tui<'a> {
                 self.user_message.body.content.clear();
                 self.user_message.body.content.push_str(&self.input.lines().join("\n"));
                 self.streaming = true;
+                self.mode = InputMode::Normal;
 
                 let tx = self.tx.clone();
                 let message = self.input.lines().join("\n");
                 self.input = TextArea::default();
+
+                let id = self.chat_id.clone();
                 tokio::spawn(async move {
-                    let _ = tx.send(UIAction::Chat {
-                        id: None,
-                        message,
-                    }).await;
+                    let _ = tx.send(UIAction::Chat { id, message }).await;
                 });
             },
             _ => {
