@@ -1,4 +1,4 @@
-use std::{io::stdout, sync::Arc};
+use std::{io::stdout, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use tracing::{error, info};
@@ -26,7 +26,7 @@ use crate::{
     host::{MCP_CONFIG_FILE, MODEL_CONFIG_FILE},
     message::{AIMessage, MessageFrame, UserMessage},
     shared::{UIAction, UIActionResult, PROJECT_DIRS},
-    widget::{self, message::MessageState, status_bar::StatusBar},
+    widget::{message::{Message, MessageState}, status_bar::StatusBar},
 };
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -41,6 +41,7 @@ pub enum InputMode {
 #[derive(Debug, Clone)]
 enum TuiInnerAction {
     OpenEditor(String),
+    ForceRender,
 }
 
 #[derive(Debug)]
@@ -89,11 +90,20 @@ impl<'a> Tui<'a> {
         let [chat_viewport, _, _] = layout(frame.area());
         self.message_state = Some(MessageState::new(chat_viewport));
 
+        // 60 fps
+        let mut animation_timer = tokio::time::interval(Duration::from_micros((1000. / 60. * 1000.) as u64));
+        let mut tick_by_animation = false;
+        let mut last_animation_frame = false;
+
         loop {
             if self.quit {
                 let _ = self.tx.send(UIAction::Quit).await;
                 break;
             }
+
+            let animation = self.streaming;
+            let clean_frame = !animation && last_animation_frame;
+            let mut anima_tick = false;
 
             // style for input
             self.tick_input_state();
@@ -102,7 +112,9 @@ impl<'a> Tui<'a> {
             let ct = cr.read().await;
             self.thread_len = ct.len();
 
-            terminal.draw(|f| draw(f, &mut self, ct)).expect("failed to draw frame");
+            if (animation && tick_by_animation) || (!animation && !tick_by_animation) || clean_frame {
+                terminal.draw(|f| draw(f, &mut self, ct)).expect("failed to draw frame");
+            }
 
             let crossterm_event = reader.next().fuse();
             tokio::select! {
@@ -114,6 +126,9 @@ impl<'a> Tui<'a> {
                         _ => (),
                     }
                 },
+                _ = animation_timer.tick() => {
+                    anima_tick = true;
+                },
                 Some(evt) = self.rx.recv() => {
                     use UIActionResult::*;
                     match evt {
@@ -123,6 +138,7 @@ impl<'a> Tui<'a> {
                         End => {
                             self.streaming = false;
                             self.ct_index = if self.ct_index > 0 { self.ct_index.saturating_add(1) } else { 0 };
+                            let _ = self.inner_tx.send(TuiInnerAction::ForceRender).await;
                         },
                     }
                 },
@@ -135,9 +151,20 @@ impl<'a> Tui<'a> {
                                 error!("failed to open editor");
                             };
                         }
+                        ForceRender => {
+                            info!("force render");
+                        }
                     }
                 },
             }
+
+            if (animation && !anima_tick) || clean_frame {
+                animation_timer.tick().await;
+                tick_by_animation = true;
+            } else {
+                tick_by_animation = anima_tick;
+            }
+            last_animation_frame = animation;
         }
     }
 
@@ -338,5 +365,5 @@ fn draw(frame: &mut Frame, state: &mut Tui, current_ct: &[Arc<MessageFrame>]) {
 
     frame.render_widget(&state.input, input);
     frame.render_widget(StatusBar { mode: state.mode }, status_bar);
-    frame.render_stateful_widget_ref(widget::message::Message, chat, state.message_state.as_mut().unwrap());
+    frame.render_stateful_widget_ref(Message { streaming: state.streaming }, chat, msg_state);
 }
