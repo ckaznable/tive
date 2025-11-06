@@ -37,29 +37,27 @@ async fn main() -> Result<()> {
     });
 
     // wait for host to return ip and port
-    let (ip, port) = loop {
-        tokio::select! {
-            _ = signal::ctrl_c() => return Ok(()),
-            Some(evt) = host_recv.recv() => {
-                match evt {
-                    HostEvent::BusMessage(msg) => {
-                        if let Some(HostServer {
-                            listen: Some(HostListen {
-                                ip: Some(_ip),
-                                port: Some(_port),
-                            }),
-                        }) = msg.server
-                        {
-                            info!("Host listen: {}:{}", _ip, _port);
-                            break (_ip, _port);
-                        } else {
-                            error!("Failed to get host listen: {:?}", msg);
-                            return Err(anyhow::anyhow!("Failed to get host listen"));
-                        }
-                    },
-                    HostEvent::Error(e) => {
-                        return Err(anyhow::anyhow!(e));
+    let (ip, port) = tokio::select! {
+        _ = signal::ctrl_c() => return Ok(()),
+        Some(evt) = host_recv.recv() => {
+            match evt {
+                HostEvent::BusMessage(msg) => {
+                    if let Some(HostServer {
+                        listen: Some(HostListen {
+                            ip: Some(_ip),
+                            port: Some(_port),
+                        }),
+                    }) = msg.server
+                    {
+                        info!("Host listen: {}:{}", _ip, _port);
+                        (_ip, _port)
+                    } else {
+                        error!("Failed to get host listen: {:?}", msg);
+                        return Err(anyhow::anyhow!("Failed to get host listen"));
                     }
+                },
+                HostEvent::Error(e) => {
+                    return Err(anyhow::anyhow!(e));
                 }
             }
         }
@@ -67,9 +65,7 @@ async fn main() -> Result<()> {
 
     // make sure host is running
     let client = client::ChatClient::new(ip, port);
-    if let Err(e) = client.wait_for_server().await {
-        return Err(e);
-    }
+    client.wait_for_server().await?;
 
     // main loop
     loop {

@@ -150,7 +150,7 @@ impl<'a> Tui<'a> {
                     match evt {
                         OpenEditor(path) => {
                             info!("opening editor: {}", path);
-                            if let Err(_) = self.open_editor(&mut terminal, path).await {
+                            if self.open_editor(&mut terminal, path).await.is_err() {
                                 error!("failed to open editor");
                             };
                         }
@@ -325,7 +325,7 @@ impl<'a> Drop for Tui<'a> {
 
 #[inline]
 fn get_chat_to_render<'b>(streaming: bool, index: usize, def: (&'b UserMessage, &'b AIMessage), ct: &'b [Arc<MessageFrame>]) -> (&'b UserMessage, &'b AIMessage) {
-    if ct.len() < 1 {
+    if ct.is_empty() {
         return def;
     }
 

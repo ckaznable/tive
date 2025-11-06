@@ -122,7 +122,7 @@ impl ChatClient {
         let handle = tokio::spawn(async move {
             loop {
                 let res = client.get(&url).send().await;
-                if let Ok(_) = res {
+                if res.is_ok() {
                     break;
                 }
 

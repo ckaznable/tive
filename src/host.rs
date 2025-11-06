@@ -98,7 +98,7 @@ impl HostProcess {
         tokio::fs::create_dir_all(&host_cache_dir).await?;
 
         Self::clone_host(&host_data_dir).await?;
-        Self::init_host_config(&self, &host_config_dir, &host_data_dir).await?;
+        self.init_host_config(&host_config_dir, &host_data_dir).await?;
 
         let process = Command::new("uv")
             .arg("run")
@@ -189,7 +189,7 @@ impl Drop for HostProcess {
 
                 std::thread::sleep(std::time::Duration::from_millis(300));
                 if let Ok(None) = child.try_wait() {
-                    let _ = child.kill();
+                    let _ = child.kill().await;
                 }
             }
         });

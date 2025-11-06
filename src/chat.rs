@@ -89,12 +89,10 @@ impl ChatWriter {
 
         let user_message: Option<UserMessage> = self.user_message.take()
             .map(|msg| Message::UserMessage(UserMessage { body: msg }))
-            .map(|msg| msg.try_into().ok())
-            .flatten();
+            .and_then(|msg| msg.try_into().ok());
         let ai_message: Option<AIMessage> = self.ai_message.take()
             .map(|msg| Message::AIMessage(AIMessage { body: msg, tool_calls: vec![], files: vec![] }))
-            .map(|msg| msg.try_into().ok())
-            .flatten();
+            .and_then(|msg| msg.try_into().ok());
 
         let (Some(user_message), Some(ai_message)) = (user_message.clone(), ai_message.clone()) else {
             return Ok(Arc::new(MessageFrame::default()));
