@@ -126,47 +126,47 @@ impl MessageState {
         Paragraph::new(text).render(rect, &mut self.buf);
     }
 
-    pub fn render_border_animation(&mut self, area: Rect, buf: &mut Buffer) {
-        const CHAR_SIZE: u16 = 2;
-
-        let vertex = [area.x, area.y, area.x + area.width - 1, area.y + area.height - 1];
-        let lt = (vertex[0], vertex[1]);
-        let rt = (vertex[2], vertex[1]);
-        let lb = (vertex[0], vertex[3]);
-        let rb = (vertex[2], vertex[3]);
-
-        use MessageBorderAnimationPos::*;
-        let pos = match self.animation.pos {
-            Top(n) => if n + CHAR_SIZE >= area.width - 2 { Right(0) } else { Top(n + CHAR_SIZE) }
-            Bottom(n) => if n + CHAR_SIZE >= area.width - 2 { Left(0) } else { Bottom(n + CHAR_SIZE) }
-            Left(n) => if n + CHAR_SIZE >= area.height - 2 { Top(0) } else { Left(n + CHAR_SIZE) }
-            Right(n) => if n + CHAR_SIZE >= area.height - 2 { Bottom(0) } else { Right(n + CHAR_SIZE) }
-        };
-
-        let ani_char = match pos {
-            Top(_) => ANIMATION_CHAR_TOP,
-            Bottom(_) => ANIMATION_CHAR_BOTTOM,
-            Left(_) => ANIMATION_CHAR_LEFT,
-            Right(_) => ANIMATION_CHAR_RIGHT,
-        };
-
-        let render_pos: [(u16, u16); CHAR_SIZE as usize] = match pos {
-            Top(n) => [(lt.0 + n, lt.1), (lt.0 + n + 1, lt.1)],
-            Bottom(n) => [(rb.0 - n, rb.1), (rb.0 - n + 1, rb.1)],
-            Left(n) => [(lb.0, lb.1 - n), (lb.0, lb.1 - n + 1)],
-            Right(n) => [(rt.0, rt.1 + n), (rt.0, rt.1 + n + 1)],
-        };
-
-        render_pos.iter().for_each(|(x, y)| {
-            buf.cell_mut((*x, *y)).map(|cell| cell.set_char(ani_char));
-        });
-
-        self.animation.pos = pos;
-        self.animation.frame = match self.animation.frame {
-            u8::MAX => 0,
-            i => i + 1,
-        };
-    }
+    // pub fn render_border_animation(&mut self, area: Rect, buf: &mut Buffer) {
+    //     const CHAR_SIZE: u16 = 2;
+    //
+    //     let vertex = [area.x, area.y, area.x + area.width - 1, area.y + area.height - 1];
+    //     let lt = (vertex[0], vertex[1]);
+    //     let rt = (vertex[2], vertex[1]);
+    //     let lb = (vertex[0], vertex[3]);
+    //     let rb = (vertex[2], vertex[3]);
+    //
+    //     use MessageBorderAnimationPos::*;
+    //     let pos = match self.animation.pos {
+    //         Top(n) => if n + CHAR_SIZE >= area.width - 2 { Right(0) } else { Top(n + CHAR_SIZE) }
+    //         Bottom(n) => if n + CHAR_SIZE >= area.width - 2 { Left(0) } else { Bottom(n + CHAR_SIZE) }
+    //         Left(n) => if n + CHAR_SIZE >= area.height - 2 { Top(0) } else { Left(n + CHAR_SIZE) }
+    //         Right(n) => if n + CHAR_SIZE >= area.height - 2 { Bottom(0) } else { Right(n + CHAR_SIZE) }
+    //     };
+    //
+    //     let ani_char = match pos {
+    //         Top(_) => ANIMATION_CHAR_TOP,
+    //         Bottom(_) => ANIMATION_CHAR_BOTTOM,
+    //         Left(_) => ANIMATION_CHAR_LEFT,
+    //         Right(_) => ANIMATION_CHAR_RIGHT,
+    //     };
+    //
+    //     let render_pos: [(u16, u16); CHAR_SIZE as usize] = match pos {
+    //         Top(n) => [(lt.0 + n, lt.1), (lt.0 + n + 1, lt.1)],
+    //         Bottom(n) => [(rb.0 - n, rb.1), (rb.0 - n + 1, rb.1)],
+    //         Left(n) => [(lb.0, lb.1 - n), (lb.0, lb.1 - n + 1)],
+    //         Right(n) => [(rt.0, rt.1 + n), (rt.0, rt.1 + n + 1)],
+    //     };
+    //
+    //     render_pos.iter().for_each(|(x, y)| {
+    //         buf.cell_mut((*x, *y)).map(|cell| cell.set_char(ani_char));
+    //     });
+    //
+    //     self.animation.pos = pos;
+    //     self.animation.frame = match self.animation.frame {
+    //         u8::MAX => 0,
+    //         i => i + 1,
+    //     };
+    // }
 }
 
 pub struct Message {
@@ -183,10 +183,10 @@ impl Message {
 
         if streaming {
             let mut title = "Generating".to_string();
-            match state.animation.frame % 3 {
-                0 => title.push_str("."),
-                1 => title.push_str(".."),
-                2 => title.push_str("..."),
+            match state.animation.frame % 60 {
+                0..=20 => title.push('.'),
+                21..=40 => title.push_str(".."),
+                41..=60 => title.push_str("..."),
                 _ => {}
             };
             block = block.title(title);
@@ -203,9 +203,6 @@ impl StatefulWidgetRef for Message {
 
     fn render_ref(&self, area:Rect, buf: &mut Buffer, state: &mut Self::State) {
         self.render_border(area, buf, self.streaming, state);
-        if self.streaming {
-            state.render_border_animation(area, buf);
-        }
 
         let area = Rect::new(area.x + 1, area.y + 1, area.width - 2, area.height - 2);
         state.draw(area, buf);
