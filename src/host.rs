@@ -100,7 +100,23 @@ impl HostProcess {
         Self::clone_host(&host_data_dir).await?;
         self.init_host_config(&host_config_dir, &host_data_dir).await?;
 
-        let process = Command::new("uv")
+        let mut cmd = Command::new("uv");
+        unsafe {
+            cmd.pre_exec(|| {
+                // Set up process to be killed when parent dies (Linux only)
+                #[cfg(target_os = "linux")]
+                {
+                    libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM, 0, 0, 0);
+                }
+
+                Ok(())
+            });
+        }
+
+        // set the process group to the current process
+        cmd.process_group(0);
+
+        let process = cmd
             .arg("run")
             .arg("dive_httpd")
             .arg("--port")

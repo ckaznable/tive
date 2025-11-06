@@ -25,6 +25,7 @@ tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 itertools = "0.14.0"
 chrono = "0.4.41"
 textwrap = "0.16.2"
+libc = "0.2.177"
 
 [profile.release]
 opt-level = "z"
